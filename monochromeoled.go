@@ -1,7 +1,6 @@
+// Package monochromeoled contains an Adafruit Monochrome OLED (SSD1306)
+// display driver.
 package monochromeoled
-
-// Modified from the original code at https://github.com/goiot/devices/tree/master/monochromeoled
-// Works with 128x62 and 128x32
 
 import (
 	"fmt"
@@ -12,18 +11,23 @@ import (
 )
 
 const (
+	ssd1306_LCDWIDTH  = 128
+	ssd1306_LCDHEIGHT = 64
+
+	addr = 0x3C // addr is the I2C address of the device.
+
 	// On or off registers.
-	ssd1306DisplayOn  = 0xAf
-	ssd1306DisplayOff = 0xAe
+	ssd1306_DISPLAY_ON  = 0xAF
+	ssd1306_DISPLAY_OFF = 0xAE
 
 	// Scrolling registers.
-	ssd1306ActivateScroll                   = 0x2F
-	ssd1306DeactivateScroll                 = 0x2E
-	ssd1306SetVerticalScrollArea            = 0xA3
-	ssd1306RightHorizontalScroll            = 0x26
-	ssd1306LeftHorizontalScroll             = 0x27
-	ssd1306VerticalAndRightHorizontalScroll = 0x29
-	ssd1306VerticalAndLeftHorizontalScroll  = 0x2A
+	ssd1306_ACTIVATE_SCROLL                      = 0x2F
+	ssd1306_DEACTIVATE_SCROLL                    = 0x2E
+	ssd1306_SET_VERTICAL_SCROLL_AREA             = 0xA3
+	ssd1306_RIGHT_HORIZONTAL_SCROLL              = 0x26
+	ssd1306_LEFT_HORIZONTAL_SCROLL               = 0x27
+	ssd1306_VERTICAL_AND_RIGHT_HORIZONTAL_SCROLL = 0x29
+	ssd1306_VERTICAL_AND_LEFT_HORIZONTAL_SCROLL  = 0x2A
 )
 
 // OLED represents an SSD1306 OLED display.
@@ -35,71 +39,55 @@ type OLED struct {
 	buf []byte // each pixel is represented by a bit
 }
 
+var initSeq = []byte{
+	0xae,
+	0x00 | 0x00, // row offset
+	0x10 | 0x00, // column offset
+	0xd5, 0x40,
+	0xa8, ssd1306_LCDHEIGHT - 1,
+	0xd3, 0x00, // set display offset to no offset
+	0x40 | 0,
+	0x8d, 0x14,
+	0x20, 0x0,
+
+	0xA0 | 0x1,
+	0xC8,
+	0xda, 0x12,
+	0x81, 0xcf, // set contrast
+	0x9d, 0xf1,
+	0xdb, 0x40,
+	0xa4, 0xa6,
+
+	0x2e,
+	0xaf,
+}
+
 // Open opens an SSD1306 OLED display. Once not in use, it needs to
 // be close by calling Close.
 // The default width is 128, height is 64 if zero values are given.
-func Open(o driver.Opener, addr, w, h int) (*OLED, error) {
+func Open(o driver.Opener) (*OLED, error) {
+	w := ssd1306_LCDWIDTH
+	h := ssd1306_LCDHEIGHT
 	dev, err := i2c.Open(o, addr)
-	buf := make([]byte, w*(h/8)+1)
-	buf[0] = 0x40 // start frame of pixel data
-	oled := &OLED{dev: dev, w: w, h: h, buf: buf}
-	err = oled.Init()
 	if err != nil {
 		return nil, err
 	}
-	return oled, nil
-}
-
-// Init sets up the display for writing
-func (o *OLED) Init() (err error) {
-	err = o.dev.Write([]byte{
-		0xae,
-		0x00 | 0x00, // row offset
-		0x10 | 0x00, // column offset
-		0xd5, 0x80,
-		0xa8, uint8(o.h - 1),
-		0xd3, 0x00, // set display offset to no offset
-		0x80 | 0,
-		0x8d, 0x14,
-		0x20, 0x0,
-
-		0xA0 | 0x1,
-		0xC8,
-	})
-	if err != nil {
-		return
+	if err := dev.Write(initSeq); err != nil {
+		return nil, err
 	}
-	if o.h == 32 {
-		err = o.dev.Write([]byte{
-			0xda, 0x02,
-			0x81, 0x8f, // set contrast
-		})
-	}
-	if o.h == 64 {
-		err = o.dev.Write([]byte{
-			0xda, 0x12,
-			0x81, 0x7f, // set contrast
-		})
-	}
-	err = o.dev.Write([]byte{
-		0x9d, 0xf1,
-		0xdb, 0x40,
-		0xa4, 0xa6,
-
-		0x2e,
-		0xaf,
-	})
-	return
+	buf := make([]byte, w*(h/8)+1)
+	buf[0] = 0x40 // start frame of pixel data
+	return &OLED{dev: dev, w: w, h: h, buf: buf}, nil
 }
 
 // On turns on the display if it is off.
 func (o *OLED) On() error {
-	return o.dev.Write([]byte{ssd1306DisplayOn})
+	return o.dev.Write([]byte{ssd1306_DISPLAY_ON})
 }
 
 // Off turns off the display if it is on.
 func (o *OLED) Off() error {
-	return o.dev.Write([]byte{ssd1306DisplayOff})
+	return o.dev.Write([]byte{ssd1306_DISPLAY_OFF})
 }
 
 // Clear clears the entire display.
@@ -110,7 +98,6 @@ func (o *OLED) Clear() error {
 	return o.Draw()
 }
 
-// SetPixel set and x,y pixel to on or off
 func (o *OLED) SetPixel(x, y int, v byte) error {
 	if x >= o.w || y >= o.h {
 		return fmt.Errorf("(x=%v, y=%v) is out of bounds on this %vx%v display", x, y, o.w, o.h)
@@ -168,7 +155,7 @@ func (o *OLED) Draw() error {
 	if err := o.dev.Write([]byte{
 		0xa4,     // write mode
 		0x40 | 0, // start line = 0
-		0x21, 0, uint8(o.w),
+		0x21, 0, ssd1306_LCDWIDTH,
 		0x22, 0, 7,
 	}); err != nil { // the write mode
 		return err
@@ -176,13 +163,13 @@ func (o *OLED) Draw() error {
 	return o.dev.Write(o.buf)
 }
 
-// EnableScroll starts scrolling in the horizontal direction starting from
+// StartScroll starts scrolling in the horizontal direction starting from
 // startY column to endY column.
 func (o *OLED) EnableScroll(startY, endY int) error {
 	panic("not implemented")
 }
 
-// DisableScroll stops the scrolling on the display.
+// StopStrolls stops the scrolling on the display.
 func (o *OLED) DisableScroll() error {
 	panic("not implemented")
 }
